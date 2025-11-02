@@ -1,9 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"image/color"
 	_ "image/png"
+	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
 type playerState int
@@ -31,101 +35,91 @@ func (ps playerState) String() string {
 }
 
 type Player struct {
-	playerState playerState
-	Friction    float64
-	jumping     bool
-	OnGround    bool
-	Sprites
 	Entity
-	ScaleX float64
-	ScaleY float64
+	Sprites
+	playerState  playerState // controls sprites etc
+	Friction     float64     // set when on a platform
+	jumping      bool        // jump key has been pressed.... or only allow jump when on ground...
+	FeetOnGround bool
+	Scale        Scale
+	screenScale  Scale
+	JumpForce    float64
 }
 
-func NewPlayer(x, y float64) *Player {
+func (p Player) String() string { // debug string
+	px, py, pw, ph := p.GetBounds()
+	fx, fy, fw, fh := p.GetFeetBounds()
+	return fmt.Sprintf("%s, x: %.2f, y: %.2f, w: %.2f, h: %.2f\nfx: %.2f, fy: %.2f, fw: %.2f, fh: %.2f", p.playerState.String(), px, py, pw, ph, fx, fy, fw, fh)
+}
+
+type Scale struct {
+	X float64
+	Y float64
+}
+
+func NewPlayer(x, y float64, level *Level) *Player {
 
 	p := &Player{
 		Entity: Entity{
 			X:              x,
 			Y:              y,
-			Width:          32,
-			Height:         32,
 			CurrentFrame:   0,
 			AnimationSpeed: 20,
 		},
-		ScaleX:      2,
-		ScaleY:      2,
-		playerState: Idle,
-		jumping:     false,
-		OnGround:    true,
+		Scale: Scale{X: 2, Y: 2},
+
+		playerState:  JumpingDown,
+		jumping:      false, // jump key has been pressed.... or only allow jump when on ground...
+		FeetOnGround: false,
+		JumpForce:    -8.0,
 	}
+
+	ssx := coordMapResize(p.Scale.X, 0, level.Width, 0, screenWidth)
+	ssy := coordMapResize(p.Scale.Y, 0, level.Height, 0, 450)
+	p.screenScale = Scale{X: ssx, Y: ssy}
+
+	fmt.Println("Player screen scale set to:", p.screenScale.X, p.screenScale.Y)
+
+	// get the sprites from the asset file for the player
 	p.loadImages()
 
+	// sprites are all much thinner than the sprite sheet cell size, so we need to adjust
+	// width and height accordingly
 	allSprites := append(append(p.WalkSprites, p.IdleSprites...), append(p.JumpUpSprites, p.JumpDownSprites...)...)
-
-	// set width and height to max of all sprites
 	w, h := maxWidthHeight(allSprites)
+
 	p.Entity.Width = float64(w)
 	p.Entity.Height = float64(h)
-	p.changeState(p.playerState)
-	p.Entity.CurrentSprites = p.IdleSprites
-	return p
-}
 
-func maxWidthHeight(sprites []*ebiten.Image) (int, int) {
-	maxW, maxH := 0, 0
-	for _, img := range sprites {
-		w := img.Bounds().Dx()
-		h := img.Bounds().Dy()
-		if w > maxW {
-			maxW = w
-		}
-		if h > maxH {
-			maxH = h
-		}
-	}
-	return maxW, maxH
+	p.changeState(p.playerState)
+	return p
 }
 
 func (p *Player) Update() {
 	// apply gravity
-	p.VelocityY += 0.2
 
-	// oldXVel := p.VelocityX
-	oldYVel := p.VelocityY
+	//oldXVel := p.VelocityX
+	//oldYVel := p.VelocityY
 
 	// update the position based on velocity
 	p.X += p.VelocityX
 	p.Y += p.VelocityY
 
-	if p.OnGround {
+	if p.FeetOnGround {
 		// apply friction only when on ground
 		p.VelocityX *= p.Friction
 	} else {
 		// air resistance
 		p.VelocityX *= 0.99
 	}
-	p.VelocityX *= 0.9
 
-	// when jump, vy goes to -2
-	// gravity adds +ve amount to it.
-	// hits top and velocity is 0
-	// then velocity goes +ve
-	// till we hit ground again.
-	// when we hit ground, set jumping to false.
+	if math.Abs(p.VelocityX) < 0.4 {
+		p.changeState(Idle)
+	}
 
-	// how to tell though...
-
-	if oldYVel < 0 && p.VelocityY >= 0 {
+	if !p.FeetOnGround && p.VelocityY > 0 {
 		p.changeState(JumpingDown)
 	}
-
-	if p.Y == 150 {
-		p.jumping = false
-	}
-
-	// if math.Abs(p.VelocityY) < 0.0001 { // fails when we hit the top and velocity is essentially zero.
-	// 	p.jumping = false
-	// }
 
 }
 
@@ -151,20 +145,33 @@ func (p *Player) changeState(state playerState) {
 	}
 }
 
-func (p *Player) Draw(screen *ebiten.Image) {
+func (p *Player) Draw(screen *ebiten.Image, level Level) {
 
+	px, py, _, _ := p.GetBounds()
+	x, y := XYCoordMap(px, py, &level)
+	if debugMode {
+		fx, fy, fw, fh := p.GetFeetBounds()
+		fx, fy = XYCoordMap(fx, fy, &level)
+
+		vector.FillRect(screen, float32(fx), float32(fy), float32(fw), float32(fh), color.RGBA{255, 255, 255, 10}, true)
+	}
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Reset()
 	if p.VelocityX < 0 {
 		op.GeoM.Scale(-1, 1)
 		op.GeoM.Translate(p.Width, 0)
 	}
-	op.GeoM.Scale(p.ScaleX, p.ScaleY)
-	op.GeoM.Translate(p.X, p.Y)
+	op.GeoM.Scale(p.screenScale.X, p.screenScale.Y)
+	op.GeoM.Translate(x, y)
 
 	screen.DrawImage(p.CurrentSprites[p.CurrentFrame], op)
+
 }
 
 func (p Player) GetBounds() (float64, float64, float64, float64) {
-	return p.X, p.Y, 2 * p.Width, 2 * p.Height
+	return p.X, p.Y, p.Scale.X * p.Width, p.Scale.Y * p.Height
+}
+
+func (p Player) GetFeetBounds() (float64, float64, float64, float64) {
+	return p.X, p.Y + (p.Scale.Y * p.Height) + 5, p.Scale.X * p.Width, -10.0
 }

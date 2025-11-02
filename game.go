@@ -1,13 +1,14 @@
 package main
 
 import (
-	"fmt"
 	"image/color"
 	"math"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 )
+
+var debugMode = false
 
 var backgroundColour *ebiten.Image
 
@@ -22,13 +23,15 @@ type Game struct {
 }
 
 func NewGame() *Game {
-	player := NewPlayer(100, 100)
+
+	level := NewLevel(screenWidth, screenHeight)
+	player := NewPlayer(100, 100, level)
 
 	backgroundColour = ebiten.NewImage(screenWidth, screenHeight)
 	backgroundColour.Fill(color.RGBA{128, 128, 255, 255})
 	return &Game{
 		Player: player,
-		level:  NewLevel(),
+		level:  level,
 	}
 }
 
@@ -48,9 +51,11 @@ func (g *Game) Update() error {
 
 	checkPlatformCollisions(g.Player, g.level.platforms)
 
-	if g.Player.Y > 500 {
-		g.Player.Y = 500
-		g.Player.VelocityY = 0
+	if !g.Player.FeetOnGround {
+		g.Player.VelocityY += 0.2
+		if g.Player.VelocityY > 5 {
+			g.Player.VelocityY = 5
+		}
 	}
 
 	g.frameCounter++
@@ -70,19 +75,22 @@ func (g *Game) checkKeys() {
 		g.Player.VelocityX = 2
 	}
 	if ebiten.IsKeyPressed(ebiten.KeyArrowUp) && !g.Player.jumping {
-		g.Player.VelocityY = -5
+		g.Player.VelocityY = g.Player.JumpForce
 		g.Player.jumping = true
 		g.Player.changeState(JumpingUp)
+		g.Player.FeetOnGround = false
 	}
 }
 
 func (g *Game) Draw(screen *ebiten.Image) {
 
-	g.level.draw(screen)
-	g.Player.Draw(screen)
+	// should do the background image here....?
 
-	debugString := fmt.Sprintf("%s, x: %.2f, y: %.2f, w: %.2f, h: %.2f", g.Player.playerState.String(), g.Player.X, g.Player.Y, g.Player.Width, g.Player.Height)
-	ebitenutil.DebugPrint(screen, debugString)
+	g.level.draw(screen)
+	g.Player.Draw(screen, *g.level)
+
+	// debugString :=
+	ebitenutil.DebugPrint(screen, g.Player.String())
 
 }
 
@@ -91,23 +99,54 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func checkPlatformCollisions(player *Player, platforms []Platform) {
-	player.OnGround = false
-	eX, eY, eW, eH := player.GetBounds()
+
+	eX, eY, eW, eH := player.GetFeetBounds()
+
+	onHorizPlatform := false
+
 	for _, platform := range platforms {
-		pX, pY, pW, pH := platform.GetBounds()
+		switch platform.direction {
+		case horiz, literal:
+			pX, pY, pW, pH := platform.GetBounds()
 
-		if player.VelocityY > 0 {
-			if eX < pX+pW &&
-				eX+eW > pX &&
-				eY < pY+pH &&
-				eY+eH > pY {
+			if player.VelocityY >= 0 {
 
-				player.Y = pY - eH
-				player.jumping = false
-				player.OnGround = true
-				player.VelocityY = 0
-				player.Friction = platform.friction
+				entityLeft := eX
+				entityRight := eX + eW
+				platformLeft := pX
+				platformRight := pX + pW
+
+				if (entityLeft > platformLeft && entityLeft < platformRight) ||
+					(entityRight > platformLeft && entityRight < platformRight) {
+
+					entityTop := eY + eH
+					entityBottom := eY
+
+					platformTop := pY - 2
+					platformBottom := pY + pH + 2
+
+					if (entityTop > platformTop && entityTop < platformBottom) ||
+						(entityBottom > platformTop && entityBottom < platformBottom) {
+						// then the feet are within the box of the platform
+
+						// amend the player's y (player.Y) so that they are standing on the top
+						// of the platform (which should also register as on plafrom)
+						player.Y = platformTop - (player.Scale.Y * player.Height)
+
+						player.jumping = false
+						player.VelocityY = 0
+						player.Friction = platform.friction
+						onHorizPlatform = true
+						player.FeetOnGround = true
+					}
+				}
 			}
+		case vert:
+			// sort out the walls later
 		}
+
+	}
+	if !onHorizPlatform {
+		player.FeetOnGround = false
 	}
 }

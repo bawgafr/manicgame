@@ -63,11 +63,6 @@ func (p *Sprites) loadImages() {
 	p.IdleSprites = append(p.IdleSprites, splitSpriteSheet(img, 1, 2)...)
 	jumpSprites := splitSpriteSheet(img, 5, 8)
 
-	// block := ebiten.NewImage(32, 32)
-	// block.Fill(image.Black)
-
-	// p.IdleSprites = []*ebiten.Image{block}
-
 	p.JumpUpSprites = jumpSprites[:4]
 	p.JumpDownSprites = jumpSprites[4:]
 
@@ -107,4 +102,19 @@ func actualImage(img image.Image) image.Image {
 	return img.(interface {
 		SubImage(r image.Rectangle) image.Image
 	}).SubImage(image.Rect(minX-1, minY, maxX+1, maxY))
+}
+
+func maxWidthHeight(sprites []*ebiten.Image) (int, int) {
+	maxW, maxH := 0, 0
+	for _, img := range sprites {
+		w := img.Bounds().Dx()
+		h := img.Bounds().Dy()
+		if w > maxW {
+			maxW = w
+		}
+		if h > maxH {
+			maxH = h
+		}
+	}
+	return maxW, maxH
 }
